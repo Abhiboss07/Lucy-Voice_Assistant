@@ -1,0 +1,10 @@
+.env
+Data/
+__pycache__/
+Backend/__pycache__/
+Frontend/__pycache__/
+*.pyc
+*.pyo
+.venv/
+.venv-broken-*/
+.vscode/
