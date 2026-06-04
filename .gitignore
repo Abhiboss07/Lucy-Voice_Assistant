@@ -8,3 +8,5 @@ Frontend/__pycache__/
 .venv/
 .venv-broken-*/
 .vscode/
+Frontend/Files/
+scratch/
