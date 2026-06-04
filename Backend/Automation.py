@@ -843,18 +843,60 @@ def HandleEmailState(Query, email_state):
  
     return "Email state error.", {"state": None}
 
+def get_windows_gps():
+    import subprocess
+    ps_code = """
+    Add-Type -AssemblyName System.Device
+    $GeoWatcher = New-Object System.Device.Location.GeoCoordinateWatcher
+    $GeoWatcher.Start()
+    $i = 0
+    while (($GeoWatcher.Status -ne 'Ready') -and ($GeoWatcher.Permission -ne 'Denied') -and ($i -lt 50)) {
+        Start-Sleep -Milliseconds 100
+        $i++
+    }
+    if ($GeoWatcher.Permission -eq 'Denied') {
+        Write-Output "Denied"
+    } else {
+        $location = $GeoWatcher.Position.Location
+        if ($location.IsUnknown) {
+            Write-Output "Unknown"
+        } else {
+            Write-Output "$($location.Latitude),$($location.Longitude)"
+        }
+    }
+    $GeoWatcher.Stop()
+    """
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_code],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            startupinfo=startupinfo
+        )
+        output = res.stdout.strip()
+        if output and "Denied" not in output and "Unknown" not in output and "," in output:
+            parts = output.split(",")
+            return float(parts[0]), float(parts[1])
+    except Exception as e:
+        print(f"Error getting Windows GPS: {e}")
+    return None
+
 def GetWeather(Topic):
     query = Topic.lower()
     
     prompt = f"""
     Analyze this weather request: "{Topic}"
     Extract:
-    1. The city name (if no city is mentioned, return null).
+    1. The specific city or location name mentioned (e.g. "Delhi", "New York", "London"). 
+       - If they ask for "my location", "here", "me", "current location", or if they do not specify any city/location, return null.
     2. The day of interest: "today" | "tomorrow" | "daily" (if general or this week).
     
     Respond in JSON format:
     {{
-        "city": "city name or null",
+        "city": "extracted location or null",
         "day": "today" | "tomorrow" | "daily"
     }}
     """
@@ -865,41 +907,79 @@ def GetWeather(Topic):
         city = data.get("city")
         day = data.get("day", "today")
 
+    # Clean generic phrases
+    if city:
+        city_clean = city.lower().strip()
+        if city_clean in ["me", "my location", "here", "current location", "local", "null", "none"]:
+            city = None
+
+    lat = None
+    lon = None
+    full_city_name = None
+    country = ""
+
+    # If no specific city is requested, find the user's local weather
     if not city:
-        city = Topic.replace("weather in", "").replace("weather of", "").replace("weather today in", "").replace("weather today", "").replace("weather", "").strip()
-        for word in ["tomorrow", "today", "yesterday", "next week", "forecast"]:
-            city = city.replace(word, "")
-        city = city.strip(" ,.?")
-        
-        if not city or city.lower() in ["me", "my location", "here", "current location"]:
+        print("Weather request has no specific location. Attempting GPS location...")
+        gps = get_windows_gps()
+        if gps:
+            lat, lon = gps
+            print(f"GPS location found: {lat}, {lon}")
             try:
                 geo_resp = requests.get("http://ip-api.com/json/", timeout=5)
                 if geo_resp.status_code == 200:
                     geo_data = geo_resp.json()
-                    city = geo_data.get("city", "London")
+                    full_city_name = geo_data.get("city", "Current Location")
+                    country = geo_data.get("country", "")
             except Exception:
-                city = "London"
+                pass
+            if not full_city_name:
+                full_city_name = "Your Location"
+        else:
+            print("GPS location unavailable. Falling back to IP geolocation...")
+            try:
+                geo_resp = requests.get("http://ip-api.com/json/", timeout=5)
+                if geo_resp.status_code == 200:
+                    geo_data = geo_resp.json()
+                    lat = geo_data.get("lat")
+                    lon = geo_data.get("lon")
+                    full_city_name = geo_data.get("city", "Unknown City")
+                    country = geo_data.get("country", "")
+            except Exception as e:
+                print(f"IP Geolocation failed: {e}")
+                
+            if lat is None or lon is None:
+                # Absolute fallback
+                lat, lon = 51.5074, -0.1278  # London
+                full_city_name = "London"
+                country = "United Kingdom"
+    else:
+        # A specific city was requested. Use geocoding API to find coordinates.
+        try:
+            geocode_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1"
+            geo_res = requests.get(geocode_url, timeout=10)
+            geo_res.raise_for_status()
+            geo_data = geo_res.json()
+            
+            results = geo_data.get("results")
+            if not results:
+                return f"I couldn't find coordinates for '{city}'."
+    
+            lat = results[0]["latitude"]
+            lon = results[0]["longitude"]
+            full_city_name = results[0]["name"]
+            country = results[0].get("country", "")
+        except Exception as e:
+            print(f"Geocoding failed for {city}: {e}")
+            return f"I was unable to search for coordinates of {city} right now."
 
+    # Now fetch the weather from Open-Meteo using the resolved lat/lon
     try:
-        geocode_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1"
-        geo_res = requests.get(geocode_url, timeout=10)
-        geo_res.raise_for_status()
-        geo_data = geo_res.json()
-        
-        results = geo_data.get("results")
-        if not results:
-            return f"I couldn't find coordinates for '{city}'."
-
-        lat = results[0]["latitude"]
-        lon = results[0]["longitude"]
-        full_city_name = results[0]["name"]
-        country = results[0].get("country", "")
-
         weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=auto"
         w_res = requests.get(weather_url, timeout=10)
         w_res.raise_for_status()
         w_data = w_res.json()
-
+    
         if day == "tomorrow":
             daily = w_data.get("daily", {})
             max_temp = daily.get("temperature_2m_max", [None, None])[1]
@@ -914,7 +994,7 @@ def GetWeather(Topic):
             wind = current.get("windspeed")
             code = current.get("weathercode")
             description = WEATHER_CODES.get(code, "Unknown conditions")
-
+    
             weather_state = {
                 "city": f"{full_city_name}, {country}" if country else full_city_name,
                 "temp": f"{temp}°C",
@@ -924,11 +1004,11 @@ def GetWeather(Topic):
             os.makedirs("Data", exist_ok=True)
             with open(os.path.join("Data", "weather_state.json"), "w", encoding="utf-8") as f:
                 json.dump(weather_state, f, indent=4)
-
+    
             return f"The weather in {full_city_name} is {description} with a temperature of {temp}°C."
     except Exception as e:
         print(f"Weather fetch failed: {e}")
-        return f"I was unable to retrieve the weather forecast for {city} right now."
+        return f"I was unable to retrieve the weather forecast for {full_city_name or city} right now."
 
 def ControlSmartHome(Topic):
     state_file = os.path.join("Data", "smart_home.json")

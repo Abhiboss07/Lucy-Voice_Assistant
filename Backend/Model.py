@@ -1,4 +1,6 @@
 from rich import print
+import os
+import json
 
 
 # funcs = [
@@ -29,7 +31,7 @@ COMMAND_PREFIXES = [
     ("system", ["mute", "unmute", "volume up", "volume down", "increase volume", "decrease volume"]),
     ("reminder", ["remind me to", "remind me", "set reminder to", "set a reminder for", "set reminder", "set a reminder", "clear all reminders", "clear reminders", "clear reminder", "delete all reminders", "delete reminders", "delete reminder", "remove all reminders", "remove reminders", "remove reminder", "remind"]),
     ("email", ["send email to", "send an email to", "send email", "send an email", "email to", "email"]),
-    ("weather", ["weather in", "weather of", "current weather in", "current weather", "temperature in", "how is the weather in", "how is the weather", "weather today in", "weather today", "what is the weather in", "what is the weather", "what's the weather in", "what's the weather", "show me the weather in", "show me the weather", "weather"]),
+    ("weather", ["weather in", "weather of", "current weather in", "current weather", "temperature in", "how is the weather in", "how is the weather", "weather today in", "weather today", "what is the weather in", "what is the weather", "what's the weather in", "what's the weather", "show me the weather in", "show me the weather", "tell me about the weather", "tell me the weather", "tell me weather", "how's the weather", "weather info", "weather"]),
     ("smarthome", [
         "turn on", "turn off", "switch on", "switch off", 
         "turn it on", "turn it off", "switch it on", "switch it off",
@@ -84,12 +86,50 @@ def _split_tasks(prompt):
     return parts
 
 
+def _is_last_message_weather():
+    try:
+        chat_file = os.path.join("Data", "ChatLog.json")
+        if os.path.exists(chat_file):
+            with open(chat_file, "r", encoding="utf-8") as f:
+                chat_log = json.load(f)
+            if chat_log:
+                for entry in reversed(chat_log):
+                    if isinstance(entry, dict) and entry.get("role") == "assistant":
+                        content = entry.get("content", "").lower()
+                        if "weather in" in content or "temperature of" in content or "forecast is" in content:
+                            return True
+                        break
+    except Exception:
+        pass
+    return False
+
+
 def _classify_single(part, full_prompt):
     lowered = _normalize(part)
     full_lowered = _normalize(full_prompt)
 
     if lowered in ["bye", "goodbye", "exit", "quit", "stop listening"]:
         return "exit"
+
+    if _is_last_message_weather():
+        cleaned_query = lowered.strip()
+        words = cleaned_query.split()
+        if len(words) <= 4:
+            is_other_command = False
+            for label, prefixes in COMMAND_PREFIXES:
+                if label != "weather":
+                    for prefix in prefixes:
+                        if cleaned_query.startswith(prefix):
+                            is_other_command = True
+                            break
+            if not is_other_command:
+                location = cleaned_query
+                for prep in ["what about in", "how about in", "what about", "how about", "and in", "in", "at", "for", "and"]:
+                    if location.startswith(prep + " "):
+                        location = location[len(prep):].strip()
+                        break
+                if location and location not in ["me", "my location", "here", "current location", "yes", "no", "ok", "sure", "yep", "nope"]:
+                    return f"weather weather in {location}"
 
     for hint in GENERAL_CREATOR_HINTS:
         if hint in full_lowered:
@@ -138,6 +178,10 @@ def _classify_single(part, full_prompt):
                 if label in ["smarthome", "reminder", "email", "weather"]:
                     return f"{label} {part.strip()}"
                 return f"{label} {subject}".strip()
+
+    weather_keywords = ["weather", "temperature", "forecast", "rain", "rainy", "snow", "cloudy", "sunny", "umbrella", "hot outside", "cold outside", "degree outside"]
+    if any(kw in lowered for kw in weather_keywords):
+        return f"weather {part.strip()}"
 
     if any(hint in lowered for hint in REALTIME_HINTS):
         return f"realtime {part.strip()}"
