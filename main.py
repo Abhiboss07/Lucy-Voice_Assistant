@@ -203,12 +203,13 @@ def _consume_listen_request():
         return True
     return False
 
-def _listen_once(status, show_errors=True, stop_when_muted=True):
+def _listen_once(status, show_errors=True, stop_when_muted=True, timeout=None):
     _safe_set_status(status)
     try:
         with speech_lock:
             return SpeechRecognition(
-                should_stop=lambda: _peek_control() == "stop" or (stop_when_muted and GetMicrophoneStatus() != "True")
+                should_stop=lambda: _peek_control() == "stop" or (stop_when_muted and GetMicrophoneStatus() != "True"),
+                timeout=timeout
             )
     except TimeoutError:
         return ""
@@ -642,13 +643,14 @@ def ConversationLoop(first_query=""):
             continue
 
         if not query:
-            query = _listen_once("Listening...", show_errors=True)
+            query = _listen_once("Listening...", show_errors=True, timeout=5.0)
 
         if query:
             HandleQuery(query)
             query = ""
         else:
-            sleep(0.05)
+            _safe_set_status("Available...")
+            break
 
 def FirstThread():
 
