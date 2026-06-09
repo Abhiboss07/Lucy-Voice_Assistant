@@ -746,6 +746,15 @@ def SendEmail(Topic):
         initial_message = data.get("message")
         initial_subject = data.get("subject")
         
+        # Defensive check: clear placeholder texts returned by LLM
+        placeholders = ["null", "none", "not provided", "not mentioned", "n/a", "no message", "no subject", "unspecified", ""]
+        if to_email and str(to_email).lower().strip() in placeholders:
+            to_email = None
+        if initial_message and str(initial_message).lower().strip() in placeholders:
+            initial_message = None
+        if initial_subject and str(initial_subject).lower().strip() in placeholders:
+            initial_subject = None
+        
     if not to_email:
         to_email = resolve_contact_or_email(Topic)
         

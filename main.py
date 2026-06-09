@@ -409,8 +409,32 @@ def HandleQuery(Query):
     state_file = os.path.join("Data", "email_state.json")
     if os.path.exists(state_file):
         try:
-            with open(state_file, "r", encoding="utf-8") as f:
-                email_state = json.load(f)
+            # Check if this is a brand new email command to start fresh
+            normalized_query = Query.lower().strip()
+            # Strip correction prefixes just like FirstLayerDMM does
+            correction_prefixes = ["i meant ", "no i meant ", "no actually ", "actually ", "no no ", "no "]
+            for pref in correction_prefixes:
+                if normalized_query.startswith(pref):
+                    normalized_query = normalized_query[len(pref):].strip(" ,.!?")
+                    break
+            
+            new_email_prefixes = ["send email to", "send an email to", "send email", "send an email", "email to", "email "]
+            new_email_exacts = ["email"]
+            
+            is_new_email_command = (
+                any(normalized_query.startswith(pref) for pref in new_email_prefixes) or
+                normalized_query in new_email_exacts
+            )
+            
+            if is_new_email_command:
+                try:
+                    os.remove(state_file)
+                except Exception:
+                    pass
+                email_state = None
+            else:
+                with open(state_file, "r", encoding="utf-8") as f:
+                    email_state = json.load(f)
             
             if email_state:
                 # If the state is 'composed', we check if the user is trying to modify it
