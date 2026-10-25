@@ -33,8 +33,8 @@ Follow these simple steps to set up and run Lucy on your local machine:
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
-cd YOUR_REPO_NAME
+git clone https://github.com/SpSingh004/Lucy-Voice_Assistant.git
+cd Lucy-Voice_Assistant
 ```
 
 ### 2. Create and Activate a Virtual Environment
